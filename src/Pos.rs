@@ -1,22 +1,24 @@
 const BLACK: i32 = -1;
 const WHITE: i32 = 1;
 
-const BIT_BOARD: [i32; 32] = [
+const BIT_BOARD: [u32; 32] = [
     18, 12, 6, 0, 19, 13, 7, 1, 26, 20, 14, 8, 27, 21, 15, 9, 2, 28, 22, 16, 3, 29, 23, 17, 10, 4,
     30, 24, 11, 5, 31, 25,
 ];
-const BOARD_BIT: [i32; 32] = [
+const BOARD_BIT: [u32; 32] = [
     0, 6, 12, 18, 1, 7, 13, 19, 8, 14, 20, 26, 9, 15, 21, 27, 16, 22, 28, 2, 17, 23, 29, 3, 24, 30,
     4, 10, 25, 31, 5, 11,
 ];
 
-const LEFT_BORDER: u32 = (1 << 18) | (1 << 26) | (1 << 2) | (1 << 10);
-const RIGHT_BORDER: u32 = (1 << 1) | (1 << 9) | (1 << 17) | (1 << 25);
-
 const BRANK_BLACK: u32 = (1 << 18) | (1 << 12) | (1 << 6) | (1 << 0);
-const WRANK_WHITE: u32 = (1 << 11) | (1 << 5) | (1 << 31) | (1 << 25);
-const NOT_ROT_LEFT: u32 = WRANK_WHITE | LEFT_BORDER;
-const NOT_ROT_RIGHT: u32 = BRANK_BLACK | RIGHT_BORDER;
+const BRANK_WHITE: u32 = (1 << 11) | (1 << 5) | (1 << 31) | (1 << 25);
+
+const NOT_RL_7: u32 = (1 << 18) | (1 << 26) | (1 << 2) | (1 << 10);
+const NOT_RR_1: u32 = NOT_RL_7;
+const NOT_RL_1: u32 = (1 << 1) | (1 << 9) | (1 << 17) | (1 << 25);
+const NOT_RR_7: u32 = NOT_RL_1;
+
+#[derive(PartialEq, Default)]
 pub struct Position {
     pub bp: u32,
     pub wp: u32,
@@ -24,10 +26,32 @@ pub struct Position {
     pub color: i32,
 }
 
+#[derive(PartialEq, Default)]
 pub struct Move {
     from: u32,
     to: u32,
     captures: u32,
+}
+
+pub struct MoveList {
+    moves: [Move; 40],
+    length: usize,
+}
+
+fn move_left<const COLOR: i32>(maske: u32) -> u32 {
+    if COLOR == BLACK {
+        (maske & (!NOT_RL_7) & (!BRANK_WHITE)).rotate_left(7)
+    } else {
+        (maske & (!NOT_RR_7) & (!BRANK_BLACK)).rotate_right(7)
+    }
+}
+
+fn move_right<const COLOR: i32>(maske: u32) -> u32 {
+    if COLOR == BLACK {
+        (maske & (!NOT_RL_1) & (!BRANK_WHITE)).rotate_left(1)
+    } else {
+        (maske & (!NOT_RR_1) & (!BRANK_BLACK)).rotate_right(1)
+    }
 }
 
 impl Position {
@@ -57,45 +81,26 @@ impl Position {
     }
 
     pub fn empty() -> Position {
-        return Position {
-            bp: 0,
-            wp: 0,
-            k: 0,
+        Position {
             color: BLACK,
-        };
-    }
-
-    //below alwas from the perspective of the player to move
-    //the rest needs to be implemented
-    pub fn move_left<const COLOR: i32>(maske: u32) -> u32 {
-        if COLOR == BLACK {
-            return (maske & (!NOT_ROT_LEFT)).rotate_left(7);
-        } else {
-            return (maske & (!NOT_ROT_RIGHT)).rotate_right(7);
+            ..Position::default()
         }
     }
 
-    pub fn move_right<const COLOR: i32>(maske: u32) -> u32 {
-        if COLOR == BLACK {
-            return (maske & (!NOT_ROT_LEFT)).rotate_left(1);
-        } else {
-            return (maske & (!NOT_ROT_RIGHT)).rotate_right(1);
-        }
-    }
     pub fn get_movers<const COLOR: i32>(&self) -> u32 {
         let nocc: u32 = !(self.bp | self.wp);
         let mut movers: u32 = 0;
         if self.k != 0 {
-            movers |= Position::move_left::<COLOR>(nocc);
-            movers |= Position::move_right::<COLOR>(nocc);
+            movers |= move_left::<COLOR>(nocc);
+            movers |= move_right::<COLOR>(nocc);
         }
         if COLOR == BLACK {
-            movers |= Position::move_left::<WHITE>(nocc);
-            movers |= Position::move_right::<WHITE>(nocc);
+            movers |= move_left::<WHITE>(nocc);
+            movers |= move_right::<WHITE>(nocc);
             movers &= self.bp;
         } else {
-            movers |= Position::move_left::<BLACK>(nocc);
-            movers |= Position::move_right::<BLACK>(nocc);
+            movers |= move_left::<BLACK>(nocc);
+            movers |= move_right::<BLACK>(nocc);
             movers &= self.wp;
         }
 
@@ -103,7 +108,25 @@ impl Position {
     }
 
     pub fn get_jumpers<const COLOR: i32>(&self) -> u32 {
-        return 0u32;
+        let nocc: u32 = !(self.bp | self.wp);
+        let mut movers: u32 = 0;
+        let opp: u32 = if COLOR == BLACK { self.wp } else { self.bp };
+        let own: u32 = if COLOR == BLACK { self.bp } else { self.wp };
+        if COLOR == BLACK {
+            movers |= move_left::<WHITE>(move_left::<WHITE>(nocc) & self.wp);
+            movers |= move_right::<WHITE>(move_right::<WHITE>(nocc) & self.wp);
+            movers &= self.bp;
+        } else {
+            movers |= move_left::<BLACK>(move_left::<BLACK>(nocc) & self.bp);
+            movers |= move_right::<BLACK>(move_right::<BLACK>(nocc) & self.bp);
+            movers &= self.wp;
+        }
+        if self.k != 0 {
+            movers |= move_left::<COLOR>(move_left::<COLOR>(nocc) & opp);
+            movers |= move_right::<COLOR>(move_right::<COLOR>(nocc) & opp);
+            movers &= own & self.k;
+        }
+        return movers;
     }
 
     pub fn get_start_position() -> Position {
@@ -119,17 +142,9 @@ impl Position {
     }
 }
 
-impl PartialEq for Position {
-    fn eq(&self, other: &Self) -> bool {
-        return self.bp == other.bp
-            && self.wp == other.wp
-            && self.k == other.k
-            && self.color == other.color;
-    }
-}
-
-impl PartialEq for Move {
-    fn eq(&self, other: &Self) -> bool {
-        return self.captures == other.captures && self.from == other.from && self.to == other.to;
+impl MoveList {
+    pub fn get_silent_movers<const COLOR: i32>(&self, pos: &Position) {
+        let mut movers = pos.get_movers::<COLOR>();
+        while movers != 0 {}
     }
 }

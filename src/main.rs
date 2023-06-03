@@ -1,8 +1,3 @@
-use rand::Rng;
-use std::io;
-use std::io::Write;
-use std::time::Instant;
-
 pub mod Pos;
 use Pos::Position;
 fn main() {
