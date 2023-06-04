@@ -181,7 +181,7 @@ impl MoveList {
     pub fn get_silent_movers<const COLOR: i32, const OPP: i32>(&mut self, pos: &Position) {
         let movers = pos.get_movers::<COLOR>();
         let nocc = !(pos.bp | pos.wp);
-        let mut pawns = movers & pos.bp;
+        let mut pawns = movers & !pos.k;
         let mut kings = movers & pos.k;
         while pawns != 0 {
             let from = pawns & !(pawns - 1u32);
@@ -196,6 +196,19 @@ impl MoveList {
             self.add_quiet_move(from, move_left::<OPP>(from) & nocc);
             self.add_quiet_move(from, move_right::<OPP>(from) & nocc);
             kings &= kings - 1;
+        }
+    }
+
+    fn try_capture<const COLOR: i32, const OPP: i32>(from: u32, pos: Position) {}
+
+    pub fn get_captures<const COLOR: i32, const OPP: i32>(&mut self, pos: Position) {
+        let jumpers = pos.get_jumpers::<COLOR>();
+        let mut pawns = jumpers & !pos.k;
+        let mut kings = jumpers & pos.k;
+        while pawns != 0 {
+            let from = pawns & !(pawns - 1u32);
+
+            pawns &= pawns - 1;
         }
     }
 

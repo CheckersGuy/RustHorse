@@ -3,7 +3,8 @@ use Pos::Position;
 
 use crate::Pos::MoveList;
 fn main() {
-    let mut position: Position = Position::get_start_position();
+    let mut position: Position = Position::empty();
+    position.bp = 1 << 21;
     position.print_position();
     println!();
     let mut liste = MoveList::empty_list();
