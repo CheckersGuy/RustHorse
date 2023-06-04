@@ -18,7 +18,7 @@ const NOT_RR_1: u32 = NOT_RL_7;
 const NOT_RL_1: u32 = (1 << 1) | (1 << 9) | (1 << 17) | (1 << 25);
 const NOT_RR_7: u32 = NOT_RL_1;
 
-#[derive(PartialEq, Default)]
+#[derive(PartialEq, Default, Clone, Copy)]
 pub struct Position {
     pub bp: u32,
     pub wp: u32,
@@ -26,16 +26,15 @@ pub struct Position {
     pub color: i32,
 }
 
-#[derive(PartialEq, Default)]
+#[derive(PartialEq, Default, Copy, Clone)]
 pub struct Move {
     from: u32,
     to: u32,
     captures: u32,
 }
-
 pub struct MoveList {
-    moves: [Move; 40],
-    length: usize,
+    pub moves: [Move; 40],
+    pub length: usize,
 }
 
 fn move_left<const COLOR: i32>(maske: u32) -> u32 {
@@ -80,6 +79,26 @@ impl Position {
         }
     }
 
+    pub fn make_move(&mut self, m: &Move) {
+        if self.color == BLACK {
+            self.bp &= !m.from;
+            self.bp |= m.to;
+            self.wp &= !m.captures;
+        } else {
+            self.wp &= !m.from;
+            self.wp |= m.to;
+            self.bp &= !m.captures;
+        }
+        //need to check for promotion
+        //and other things
+        if self.k != 0 {}
+    }
+
+    pub fn undo_mvoe(&mut self, m: &Move) {
+        //to be implemented
+    }
+
+    //need to understand the borrow trait
     pub fn empty() -> Position {
         Position {
             color: BLACK,
@@ -141,10 +160,46 @@ impl Position {
         return start;
     }
 }
-
 impl MoveList {
-    pub fn get_silent_movers<const COLOR: i32>(&self, pos: &Position) {
-        let mut movers = pos.get_movers::<COLOR>();
-        while movers != 0 {}
+    pub fn empty_list() -> MoveList {
+        MoveList {
+            length: 0,
+            moves: [Move::default(); 40],
+        }
+    }
+
+    fn add_quiet_move(&mut self, from: u32, to: u32) {
+        let scrap: usize = (to == 0) as usize;
+        self.moves[self.length + scrap] = Move {
+            from,
+            to,
+            captures: 0,
+        };
+        self.length += (to != 0) as usize;
+    }
+
+    pub fn get_silent_movers<const COLOR: i32, const OPP: i32>(&mut self, pos: &Position) {
+        let movers = pos.get_movers::<COLOR>();
+        let nocc = !(pos.bp | pos.wp);
+        let mut pawns = movers & pos.bp;
+        let mut kings = movers & pos.k;
+        while pawns != 0 {
+            let from = pawns & !(pawns - 1u32);
+            self.add_quiet_move(from, move_left::<COLOR>(from) & nocc);
+            self.add_quiet_move(from, move_right::<COLOR>(from) & nocc);
+            pawns &= pawns - 1;
+        }
+        while kings != 0 {
+            let from = kings & !(kings - 1u32);
+            self.add_quiet_move(from, move_left::<COLOR>(from) & nocc);
+            self.add_quiet_move(from, move_right::<COLOR>(from) & nocc);
+            self.add_quiet_move(from, move_left::<OPP>(from) & nocc);
+            self.add_quiet_move(from, move_right::<OPP>(from) & nocc);
+            kings &= kings - 1;
+        }
+    }
+
+    pub fn iter(&mut self) -> std::slice::Iter<'_, Move> {
+        (&self.moves[0..self.length]).iter()
     }
 }
