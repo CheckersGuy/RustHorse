@@ -1,14 +1,41 @@
+use regex::Regex;
+
 const BLACK: i32 = -1;
 const WHITE: i32 = 1;
-
+/*
 const BIT_BOARD: [u32; 32] = [
     18, 12, 6, 0, 19, 13, 7, 1, 26, 20, 14, 8, 27, 21, 15, 9, 2, 28, 22, 16, 3, 29, 23, 17, 10, 4,
     30, 24, 11, 5, 31, 25,
 ];
-const BOARD_BIT: [u32; 32] = [
+*/
+/*
+  11  05  31  25
+10  04  30  24
+  03  29  23  17
+02  28  22  16
+  27  21  15  09
+26  20  14  08
+  19  13  07  01
+18  12  06  00
+*/
+//reordering to be continued
+pub const BIT_BOARD: [usize; 32] = [
     0, 6, 12, 18, 1, 7, 13, 19, 8, 14, 20, 26, 9, 15, 21, 27, 16, 22, 28, 2, 17, 23, 29, 3, 24, 30,
     4, 10, 25, 31, 5, 11,
 ];
+
+pub const BOARD_BIT: [usize; 32] = [
+    0, 4, 19, 23, 26, 30, 1, 5, 8, 12, 27, 31, 2, 6, 9, 13, 16, 20, 3, 7, 10, 14, 17, 21, 24, 28,
+    11, 15, 18, 22, 25, 29,
+];
+
+#[derive(Debug, Clone, Copy)]
+pub enum Square {
+    BPAWN(usize),
+    WPAWN(usize),
+    BKING(usize),
+    WKING(usize),
+}
 
 const BRANK_BLACK: u32 = (1 << 18) | (1 << 12) | (1 << 6) | (1 << 0);
 const BRANK_WHITE: u32 = (1 << 11) | (1 << 5) | (1 << 31) | (1 << 25);
@@ -18,12 +45,46 @@ const NOT_RR_1: u32 = NOT_RL_7;
 const NOT_RL_1: u32 = (1 << 1) | (1 << 9) | (1 << 17) | (1 << 25);
 const NOT_RR_7: u32 = NOT_RL_1;
 
-#[derive(PartialEq, Default, Clone, Copy)]
+#[derive(PartialEq, Default, Clone, Copy, Hash, Eq)]
 pub struct Position {
     pub bp: u32,
     pub wp: u32,
     pub k: u32,
     pub color: i32,
+}
+
+pub struct PosIterator {
+    partial: Position,
+}
+//to be continued
+impl Iterator for PosIterator {
+    type Item = Square;
+    fn next(&mut self) -> Option<Self::Item> {
+        let occ = self.partial.bp | self.partial.wp;
+
+        if occ == 0 {
+            return None;
+        }
+        let trailing = occ.trailing_zeros();
+        let lsb = 1u32 << trailing;
+        let index = trailing as usize;
+        //removing the lsb from partial
+
+        let value: i32 = ((lsb & self.partial.bp) != 0) as i32
+            + (((lsb & self.partial.wp) != 0) as i32) * 2i32
+            + (((lsb & self.partial.k) != 0) as i32) * 3i32;
+
+        self.partial.bp &= !lsb;
+        self.partial.wp &= !lsb;
+        self.partial.k &= !lsb;
+        match value {
+            1 => Some(Square::BPAWN(index)),
+            2 => Some(Square::WPAWN(index)),
+            4 => Some(Square::BKING(index)),
+            5 => Some(Square::WKING(index)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(PartialEq, Default, Copy, Clone)]
@@ -56,7 +117,7 @@ fn move_right<const COLOR: i32>(maske: u32) -> u32 {
 impl Position {
     pub fn print_position(&self) {
         for i in (0..8).rev() {
-            for j in 0..4 {
+            for j in (0..4).rev() {
                 let maske: u32 = 1u32 << (BIT_BOARD[4 * i + j]);
                 let value: i32 = ((maske & self.bp) != 0) as i32
                     + (((maske & self.wp) != 0) as i32) * 2i32
@@ -94,7 +155,7 @@ impl Position {
         if self.k != 0 {}
     }
 
-    pub fn undo_mvoe(&mut self, m: &Move) {
+    pub fn undo_move(&mut self, m: &Move) {
         //to be implemented
     }
 
@@ -151,15 +212,76 @@ impl Position {
     pub fn get_start_position() -> Position {
         let mut start: Position = Position::empty();
         for i in 0..12 {
-            start.bp |= 1 << BOARD_BIT[i];
+            start.bp |= 1 << BIT_BOARD[i];
         }
         for i in 20..32 {
-            start.wp |= 1 << BOARD_BIT[i];
+            start.wp |= 1 << BIT_BOARD[i];
         }
         start.k = 0u32;
         return start;
     }
+
+    pub fn iter(&self) -> PosIterator {
+        PosIterator {
+            partial: self.clone(),
+        }
+    }
 }
+
+impl TryFrom<&str> for Position {
+    type Error = std::io::ErrorKind;
+    fn try_from(test: &str) -> Result<Self, Self::Error> {
+        let mut pos: Position = Position::default();
+
+        let add_sq = |pos: &mut Position, color: i32, square: usize| {
+            if color == -1 {
+                pos.bp |= 1 << BIT_BOARD[square - 1];
+            } else {
+                pos.wp |= 1 << BIT_BOARD[square - 1];
+            }
+        };
+
+        match test.chars().next().unwrap() {
+            'W' => pos.color = 1,
+            'B' => pos.color = -1,
+            _ => (),
+        }
+
+        test.split(":").skip(1).for_each(|s| {
+            let mut color: i32 = 0;
+            match s.chars().next().unwrap() {
+                'W' => color = 1,
+                'B' => color = -1,
+                _ => (),
+            }
+            let splits = s.split(",");
+
+            for (i, val) in splits.enumerate() {
+                let mut sq_str = val.chars();
+                if i == 0 {
+                    sq_str.next();
+                }
+                let m = sq_str.clone().next().unwrap();
+                match m {
+                    'K' => {
+                        sq_str.next();
+                        let square: usize = sq_str.as_str().parse().expect("Invalid Fen");
+                        add_sq(&mut pos, color, square);
+                        pos.k |= 1 << BIT_BOARD[square - 1];
+                    }
+
+                    _ => {
+                        let square: usize = sq_str.as_str().parse().expect("Invalid Fen");
+                        add_sq(&mut pos, color, square);
+                    }
+                }
+            }
+        });
+
+        Ok(pos)
+    }
+}
+
 impl MoveList {
     pub fn empty_list() -> MoveList {
         MoveList {
@@ -200,7 +322,6 @@ impl MoveList {
     }
 
     fn try_capture<const COLOR: i32, const OPP: i32>(from: u32, pos: Position) {}
-
     pub fn get_captures<const COLOR: i32, const OPP: i32>(&mut self, pos: Position) {
         let jumpers = pos.get_jumpers::<COLOR>();
         let mut pawns = jumpers & !pos.k;
