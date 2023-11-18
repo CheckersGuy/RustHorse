@@ -37,15 +37,18 @@ pub fn create_unique_fens(input: String, output: String) -> std::io::Result<()> 
     let mut writer = File::create(output)?;
     let counter = 1000000000;
     let mut filter = Bloom::new_for_fp_rate(counter, 0.1);
-
+    let mut capture_count = 0;
     for line in reader.lines() {
         let fen_string = line?;
-        let pos = Position::try_from(fen_string.as_str());
+        let pos = Position::try_from(fen_string.as_str())?;
+        //checking if we have a capture
         if !filter.check(&pos) {
             writer.write_all((fen_string + "\n").as_str().as_bytes())?;
             filter.set(&pos)
         }
     }
+
+    println!("Found a total of {} captures", capture_count);
 
     Ok(())
 }
@@ -124,7 +127,21 @@ impl DataLoader {
         if self.shuff_buf.is_empty() {
             let now = Instant::now();
             for _ in 0..self.capa {
-                let result = self.read()?;
+                let mut result;
+                loop {
+                    result = self.read()?;
+                    match result.position {
+                        SampleType::Pos(position) => {
+                            let piece_count = position.wp.count_ones() + position.bp.count_ones();
+                            if piece_count > 10 {
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 self.shuff_buf.push(result);
             }
             if self.shuffle {
@@ -146,9 +163,11 @@ impl DataLoader {
             println!("Elapsed time {}", elapsed);
             println!("Transformation time {}", transform.elapsed().as_millis());
         }
-        Ok(self.shuff_buf.pop().unwrap())
+
+        let sample = self.shuff_buf.pop().unwrap();
+        Ok(sample)
     }
-    //below needs to be done differently
+
     pub fn dump_pos_to_file(&mut self, output: String) -> std::io::Result<()> {
         self.shuffle = false;
         println!("We have {} positions", self.num_samples);

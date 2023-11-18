@@ -39,7 +39,9 @@ impl BatchProvider {
             let mut bucket_array = bucket.as_array_mut();
             for i in 0..self.batch_size {
                 //need to throw pyErrors
+
                 let sample = self.loader.get_next().expect("Error loading sample");
+
                 let board_index = |mut index: usize| {
                     index = Pos::BOARD_BIT[index];
                     let row = index / 4;

@@ -28,3 +28,4 @@ numpy = "0.19"
 rayon = "1.7"
 rip_shuffle={version="0.1"}
 bloomfilter = "1"
+signal-hook = "0.3.17"
