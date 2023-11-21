@@ -38,8 +38,6 @@ impl BatchProvider {
             let mut res_array = result.as_array_mut();
             let mut bucket_array = bucket.as_array_mut();
             for i in 0..self.batch_size {
-                //need to throw pyErrors
-
                 let sample = self.loader.get_next().expect("Error loading sample");
 
                 let board_index = |mut index: usize| {
@@ -77,20 +75,23 @@ impl BatchProvider {
                     dataloader::Result::DRAW => res_array[i] = 0.5,
                     _ => (), //need to add error handling
                 }
+                let has_kings = (position.k != 0) as i64;
                 let piece_count = position.wp.count_ones() + position.bp.count_ones();
                 // bucket_array[i] =
                 //    ((position.wp.count_ones() + position.bp.count_ones() - 1) / 6) as i64;
                 let sub_two;
                 match piece_count {
-                    24 | 23 | 22 => sub_two = 5,
-                    21 | 20 | 19 => sub_two = 6,
-                    18 | 17 | 16 => sub_two = 7,
-                    15 | 14 | 13 => sub_two = 8,
-                    12 | 11 | 10 => sub_two = 9,
-                    9 => sub_two = 4,
-                    8 => sub_two = 3,
-                    7 => sub_two = 2,
-                    6 | 5 | 4 => sub_two = 1,
+                    24 | 23 | 22 => sub_two = 12,
+                    21 | 20 | 19 => sub_two = 13,
+                    18 | 17 | 16 => sub_two = 14,
+                    15 | 14 | 13 => sub_two = 15,
+                    12 | 11 | 10 => sub_two = 16,
+                    9 => sub_two = 6 + 5 * has_kings,
+                    8 => sub_two = 5 + 5 * has_kings,
+                    7 => sub_two = 4 + 5 * has_kings,
+                    6 => sub_two = 3 + 5 * has_kings,
+                    5 => sub_two = 2 + 5 * has_kings,
+                    4 => sub_two = 1,
                     3 | 2 | 1 | 0 => sub_two = 0,
                     _ => sub_two = 0,
                 }

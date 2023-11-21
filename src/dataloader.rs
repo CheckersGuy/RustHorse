@@ -1,6 +1,8 @@
 use crate::Pos::Position;
 use bloomfilter::Bloom;
+use byteorder::WriteBytesExt;
 use byteorder::{LittleEndian, ReadBytesExt};
+use mktemp::Temp;
 use rand::prelude::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -9,8 +11,10 @@ use rip_shuffle::RipShuffleParallel;
 use std::cell::RefCell;
 use std::cmp;
 use std::fs::File;
+use std::io;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::path::Path;
 use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub enum Result {
@@ -31,25 +35,34 @@ impl From<i8> for Result {
     }
 }
 
-pub fn create_unique_fens(input: String, output: String) -> std::io::Result<()> {
+fn prepend_file<P: AsRef<Path>>(data: &[u8], file_path: &P) -> io::Result<()> {
+    let mut tmp_path = Temp::new_file()?;
+    let mut tmp = File::create(&tmp_path)?;
+    let mut src = File::open(&file_path)?;
+    tmp.write_all(&data)?;
+    io::copy(&mut src, &mut tmp)?;
+    std::fs::remove_file(file_path)?;
+    std::fs::rename(&tmp_path, file_path)?;
+
+    Ok(())
+}
+
+pub fn create_unique_fens<P: AsRef<Path>>(input: &P, output: &P) -> std::io::Result<()> {
     //to be implemented
-    let reader = BufReader::new(File::open(input)?);
-    let mut writer = File::create(output)?;
-    let counter = 1000000000;
-    let mut filter = Bloom::new_for_fp_rate(counter, 0.1);
-    let mut capture_count = 0;
+    let reader = BufReader::with_capacity(10000000, File::open(&input)?);
+    let mut writer = File::create(&output)?;
+    let mut filter = Bloom::new_for_fp_rate(1000000000, 0.1);
+    let mut line_count: usize = 0;
     for line in reader.lines() {
         let fen_string = line?;
         let pos = Position::try_from(fen_string.as_str())?;
-        //checking if we have a capture
         if !filter.check(&pos) {
             writer.write_all((fen_string + "\n").as_str().as_bytes())?;
-            filter.set(&pos)
+            filter.set(&pos);
+            line_count += 1;
         }
     }
-
-    println!("Found a total of {} captures", capture_count);
-
+    prepend_file(format!("{line_count}\n").as_bytes(), output)?;
     Ok(())
 }
 
@@ -84,6 +97,29 @@ pub struct DataLoader {
     rng: StdRng,
 }
 
+impl Sample {
+    //only writes if SampleType is a fenstring
+    //or we need a get_fen_string function as well to do the conversion
+    pub fn write_fen<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        if let SampleType::Fen(ref fen_string) = self.position {
+            let length: u16 = fen_string.len() as u16;
+            writer.write_u16::<LittleEndian>(length)?;
+            writer.write_all(fen_string.as_bytes())?;
+            writer.write_i16::<LittleEndian>(self.eval)?;
+            let conv;
+            match self.result {
+                Result::LOSS => conv = 1,
+                Result::WIN => conv = 2,
+                Result::DRAW => conv = 3,
+                Result::UNKNOWN => conv = 0,
+            }
+            writer.write_i8(conv)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl DataLoader {
     pub fn new(path: String, capacity: usize, shuffle: bool) -> std::io::Result<DataLoader> {
         let mut data_loader = DataLoader {
@@ -106,7 +142,6 @@ impl DataLoader {
         if !has_data_left {
             println!("Reached the end of the file and buffer is empty");
             self.reader.rewind()?;
-            //reading the file size once more since we rewind the stream
             self.reader.read_u64::<LittleEndian>()?;
         }
         let val = self.reader.read_u16::<LittleEndian>()?;
@@ -127,21 +162,7 @@ impl DataLoader {
         if self.shuff_buf.is_empty() {
             let now = Instant::now();
             for _ in 0..self.capa {
-                let mut result;
-                loop {
-                    result = self.read()?;
-                    match result.position {
-                        SampleType::Pos(position) => {
-                            let piece_count = position.wp.count_ones() + position.bp.count_ones();
-                            if piece_count > 10 {
-                                continue;
-                            } else {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                let result = self.read()?;
                 self.shuff_buf.push(result);
             }
             if self.shuffle {
