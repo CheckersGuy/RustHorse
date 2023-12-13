@@ -3,6 +3,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use std::borrow::BorrowMut;
 use Pos::{Position, Square};
 pub mod Pos;
+pub mod Sample;
 pub mod dataloader;
 use dataloader::DataLoader;
 use numpy::{IntoPyArray, PyArray1, PyArrayDyn, PyReadonlyArrayDyn};
@@ -31,13 +32,18 @@ impl BatchProvider {
         py: Python<'_>,
         input: &PyArray1<f32>,
         result: &PyArray1<f32>,
+        evals: &PyArray1<i16>,
         bucket: &PyArray1<i64>,
+        psqt_buckets: &PyArray1<i64>,
     ) -> PyResult<()> {
         unsafe {
             let mut in_array = input.as_array_mut();
             let mut res_array = result.as_array_mut();
             let mut bucket_array = bucket.as_array_mut();
+            let mut psqt_array = psqt_buckets.as_array_mut();
+            let mut eval_array = evals.as_array_mut();
             for i in 0..self.batch_size {
+                //need to add continue for not valid samples
                 let sample = self.loader.get_next().expect("Error loading sample");
 
                 let board_index = |mut index: usize| {
@@ -47,7 +53,7 @@ impl BatchProvider {
                     4 * row + 3 - col
                 };
                 let mut position = Position::default();
-                if let dataloader::SampleType::Pos(ref pos) = sample.position {
+                if let Sample::SampleType::Pos(ref pos) = sample.position {
                     position = pos.clone();
                 } else {
                     println!("I suck at error handling");
@@ -70,32 +76,40 @@ impl BatchProvider {
                     }
                 }
                 match sample.result {
-                    dataloader::Result::WIN => res_array[i] = 1.0,
-                    dataloader::Result::LOSS => res_array[i] = 0.0,
-                    dataloader::Result::DRAW => res_array[i] = 0.5,
-                    _ => (), //need to add error handling
+                    Sample::Result::WIN => res_array[i] = 1.0,
+                    Sample::Result::LOSS => res_array[i] = 0.0,
+                    Sample::Result::DRAW => res_array[i] = 0.5,
+                    _ => (), //need to add error handling just go to the nex sample in that case
                 }
-                let has_kings = (position.k != 0) as i64;
+
+                eval_array[i] = sample.eval;
+
                 let piece_count = position.wp.count_ones() + position.bp.count_ones();
                 // bucket_array[i] =
                 //    ((position.wp.count_ones() + position.bp.count_ones() - 1) / 6) as i64;
+                //
+                //
+                let psqt_index = (piece_count - 1) / 4;
+                psqt_array[i] = psqt_index as i64;
                 let sub_two;
                 match piece_count {
-                    24 | 23 | 22 => sub_two = 12,
-                    21 | 20 | 19 => sub_two = 13,
-                    18 | 17 | 16 => sub_two = 14,
-                    15 | 14 | 13 => sub_two = 15,
-                    12 | 11 | 10 => sub_two = 16,
-                    9 => sub_two = 6 + 5 * has_kings,
-                    8 => sub_two = 5 + 5 * has_kings,
-                    7 => sub_two = 4 + 5 * has_kings,
-                    6 => sub_two = 3 + 5 * has_kings,
-                    5 => sub_two = 2 + 5 * has_kings,
-                    4 => sub_two = 1,
-                    3 | 2 | 1 | 0 => sub_two = 0,
+                    24 | 23 | 22 => sub_two = 0,
+                    21 | 20 | 19 => sub_two = 1,
+                    18 | 17 | 16 => sub_two = 2,
+                    15 | 14 | 13 => sub_two = 3,
+                    12 | 11 => sub_two = 4,
+                    10 => sub_two = 5,
+                    9 => sub_two = 6,
+                    8 => sub_two = 7,
+                    7 => sub_two = 8,
+                    6 => sub_two = 9,
+                    5 => sub_two = 10,
+                    4 => sub_two = 11,
+                    3 | 2 | 1 | 0 => sub_two = 12,
                     _ => sub_two = 0,
                 }
                 bucket_array[i] = sub_two;
+                //testing
             }
         }
         Ok(())

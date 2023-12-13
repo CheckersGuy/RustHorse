@@ -45,7 +45,7 @@ const NOT_RR_1: u32 = NOT_RL_7;
 const NOT_RL_1: u32 = (1 << 1) | (1 << 9) | (1 << 17) | (1 << 25);
 const NOT_RR_7: u32 = NOT_RL_1;
 
-#[derive(PartialEq, Default, Clone, Copy, Hash, Eq)]
+#[derive(PartialEq, Default, Clone, Copy, Hash, Eq, Debug)]
 pub struct Position {
     pub bp: u32,
     pub wp: u32,
