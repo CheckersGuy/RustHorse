@@ -1,4 +1,4 @@
-use regex::Regex;
+use std::{io::ErrorKind, num::ParseIntError};
 
 const BLACK: i32 = -1;
 const WHITE: i32 = 1;
@@ -229,8 +229,9 @@ impl Position {
 }
 
 impl TryFrom<&str> for Position {
-    type Error = std::io::ErrorKind;
-    fn try_from(test: &str) -> Result<Self, Self::Error> {
+    type Error = std::io::Error;
+
+    fn try_from(test: &str) -> std::io::Result<Position> {
         let mut pos: Position = Position::default();
 
         let add_sq = |pos: &mut Position, color: i32, square: usize| {
@@ -246,12 +247,18 @@ impl TryFrom<&str> for Position {
             'B' => pos.color = -1,
             _ => (),
         }
+        //to be continued
+        //need to convert the option in next.unwrap() to a Result
 
-        test.split(":").skip(1).for_each(|s| {
+        for s in test.split(":").skip(1) {
             let mut color: i32 = 0;
-            match s.chars().next().unwrap() {
-                'W' => color = 1,
-                'B' => color = -1,
+            let token_op = s.chars().next();
+            if token_op == None {
+                std::io::Error::new(ErrorKind::NotFound, "Error parsing color");
+            }
+            match s.chars().next() {
+                Some('W') => color = 1,
+                Some('B') => color = -1,
                 _ => (),
             }
             let splits = s.split(",");
@@ -265,18 +272,35 @@ impl TryFrom<&str> for Position {
                 match m {
                     'K' => {
                         sq_str.next();
-                        let square: usize = sq_str.as_str().parse().expect("Invalid Fen");
+                        let square: usize = match sq_str.as_str().parse() {
+                            Ok(n) => n,
+                            Err(_) => {
+                                return Err(std::io::Error::new(
+                                    ErrorKind::NotFound,
+                                    "Error parsing squares",
+                                ))
+                            }
+                        };
+
                         add_sq(&mut pos, color, square);
                         pos.k |= 1 << BIT_BOARD[square - 1];
                     }
 
                     _ => {
-                        let square: usize = sq_str.as_str().parse().expect("Invalid Fen");
+                        let square: usize = match sq_str.as_str().parse() {
+                            Ok(n) => n,
+                            Err(_) => {
+                                return Err(std::io::Error::new(
+                                    ErrorKind::NotFound,
+                                    "Error parsing squares",
+                                ))
+                            }
+                        };
                         add_sq(&mut pos, color, square);
                     }
                 }
             }
-        });
+        }
 
         Ok(pos)
     }

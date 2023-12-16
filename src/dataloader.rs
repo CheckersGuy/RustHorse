@@ -51,18 +51,24 @@ impl DataLoader {
             self.reader.rewind()?;
             self.reader.read_u64::<LittleEndian>()?;
         }
-        let val = self.reader.read_u16::<LittleEndian>()?;
-        let mut buffer = vec![0; val as usize];
-        self.reader.read_exact(&mut buffer)?;
-        let s = String::from_utf8(buffer).unwrap();
-        let eval = self.reader.read_i16::<LittleEndian>()?;
-        let res = self.reader.read_i8()?;
-
+        /*
+                let val = self.reader.read_u16::<LittleEndian>()?;
+                let mut buffer = vec![0; val as usize];
+                self.reader.read_exact(&mut buffer)?;
+                let s = String::from_utf8(buffer).unwrap();
+                let eval = self.reader.read_i16::<LittleEndian>()?;
+                let res = self.reader.read_i8()?;
+        */
+        let mut sample = Sample::Sample::default();
+        sample.read_into(&mut self.reader)?;
+        /*
         Ok(Sample::Sample {
             position: SampleType::Fen(s),
             eval,
             result: Sample::Result::from(res),
         })
+        */
+        Ok(sample)
     }
 
     pub fn get_next(&mut self) -> std::io::Result<Sample::Sample> {
@@ -85,8 +91,6 @@ impl DataLoader {
                     sample.position = SampleType::Pos(Position::try_from(&fen_string[..]).unwrap());
                 }
             });
-
-            //and now with rayon
             let elapsed = now.elapsed().as_millis();
             println!("Elapsed time {}", elapsed);
             println!("Transformation time {}", transform.elapsed().as_millis());

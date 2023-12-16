@@ -15,8 +15,9 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex};
 use std::thread;
 use std::{io, path::Path};
-use Data::Rescorer;
+use Data::{create_unique_fens, Generator, Rescorer};
 use Pos::Position;
+use Sample::Result;
 use Sample::SampleType;
 fn main() -> std::io::Result<()> {
     //let mut sample = Sample::Sample::default();
@@ -25,29 +26,51 @@ fn main() -> std::io::Result<()> {
     //
     //
     //
+    /*
+        let mut dataloader = DataLoader::new(String::from("out.samples"), 1000000, false)?;
 
-    /*let mut dataloader = DataLoader::new(String::from("test.data"), 1000000, false)?;
-
-    for _ in 0..100 {
-        let sample = dataloader.get_next()?;
-        if let SampleType::Fen(ref position) = sample.position {
-            let pos = Position::try_from(position.as_str())?;
-            pos.print_position(); e
-            println!("Evaluation is: {}", sample.eval);
+        for _ in 0..3000 {
+            let sample = dataloader.get_next()?;
+            if let SampleType::Fen(ref position) = sample.position {
+                let pos = Position::try_from(position.as_str())?;
+                pos.print_position();
+                let sample_string = match sample.result {
+                    Result::LOSS => "LOSS",
+                    Result::WIN => "WIN",
+                    Result::DRAW => "DRAW",
+                    Result::UNKNOWN => "UNKNOWN",
+                };
+                println!("Result is is: {} and fen: {}", sample_string, position);
+            }
+            println!();
+            println!();
         }
-        println!();
-        println!();
-    }
     */
+    /*
+        let mut rescorer = Rescorer::new(
+            String::from("trainingunique2.pos"),
+            String::from("test.data"),
+            14,
+        );
+        rescorer.max_rescores = Some(1000000);
 
-    let mut rescorer = Rescorer::new(
-        String::from("trainingunique2.pos"),
-        String::from("test.data"),
-        14,
+        rescorer.start_rescoring().unwrap();
+    */
+    // Data::create_unique_fens("training.pos", "unique.pos")?;
+
+    //Need to write some code to combine 2 or more sample files
+    //which should be straight forward to add
+    //
+    //Data::merge_samples(vec!["out3.samples", "out4.samples"], "out5.samples")?;
+
+    let generator = Generator::new(
+        String::from("unique.pos"),
+        String::from("cloud.samples"),
+        219,
+        5000000,
     );
-    rescorer.max_rescores = Some(1000000);
 
-    rescorer.start_rescoring().unwrap();
+    generator.generate_games()?;
 
     /*let mut reader = BufReader::with_capacity(1000000, File::open("trainingunique2.pos")?);
         let mut buffer = String::new();

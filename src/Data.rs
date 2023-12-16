@@ -3,8 +3,11 @@ use crate::Pos::Position;
 use crate::Sample;
 use bloomfilter::reexports::bit_vec::BitBlock;
 use bloomfilter::Bloom;
+use byteorder::LittleEndian;
+use byteorder::ReadBytesExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use mktemp::Temp;
+use rand::seq::SliceRandom;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::fs::File;
@@ -19,7 +22,6 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use Sample::SampleType;
-
 //Rescorer takes fen/pdn strings and scores them
 #[derive(Debug, Default)]
 pub struct Rescorer {
@@ -27,6 +29,45 @@ pub struct Rescorer {
     output: String,
     num_workers: usize,
     pub max_rescores: Option<usize>,
+}
+
+//Generator produces fen_strings
+#[derive(Debug, Default)]
+pub struct Generator {
+    book: String,
+    output: String,
+    num_workers: usize,
+    pub max_samples: usize,
+}
+
+pub fn merge_samples(samples: Vec<&str>, output: &str) -> std::io::Result<()> {
+    let mut filter = Bloom::new_for_fp_rate(1000000000, 0.1);
+    let mut writer = File::create(output)?;
+    let mut unique_count: usize = 0;
+    let mut total_count = 0;
+    for file in samples {
+        let mut reader = File::open(file)?;
+        //first read the number of positions in the file
+        let num_data = reader.read_u64::<LittleEndian>()?;
+
+        for _ in 0..num_data {
+            let mut sample = Sample::Sample::default();
+            sample.read_into(&mut reader)?;
+            sample.write_fen(&mut writer)?;
+            if let Sample::SampleType::Fen(fen_string) = sample.position {
+                if !filter.check(&fen_string) {
+                    unique_count += 1;
+                    filter.set(&fen_string);
+                }
+                total_count += 1;
+            }
+        }
+    }
+    drop(writer);
+    let path = Path::new(output);
+    prepend_file((total_count as u64).to_le_bytes().as_slice(), &path)?;
+    println!("We processed {total_count} samples and found {unique_count} unique samples");
+    Ok(())
 }
 
 fn prepend_file<P: AsRef<Path>>(data: &[u8], file_path: &P) -> std::io::Result<()> {
@@ -41,22 +82,28 @@ fn prepend_file<P: AsRef<Path>>(data: &[u8], file_path: &P) -> std::io::Result<(
     Ok(())
 }
 
-pub fn create_unique_fens<P: AsRef<Path>>(input: &P, output: &P) -> std::io::Result<()> {
+pub fn create_unique_fens(in_str: &str, out: &str) -> std::io::Result<()> {
     //to be implemented
+    let input = Path::new(in_str);
+    let output = Path::new(out);
     let reader = BufReader::with_capacity(10000000, File::open(&input)?);
     let mut writer = File::create(&output)?;
     let mut filter = Bloom::new_for_fp_rate(1000000000, 0.1);
     let mut line_count: usize = 0;
     for line in reader.lines() {
         let fen_string = line?;
-        let pos = Position::try_from(fen_string.as_str())?;
+        let pos = Position::try_from(fen_string.as_str()).unwrap_or(Position::default());
+        if pos == Position::default() {
+            continue;
+        }
+
         if !filter.check(&pos) {
             writer.write_all((fen_string + "\n").as_str().as_bytes())?;
             filter.set(&pos);
             line_count += 1;
         }
     }
-    prepend_file(format!("{line_count}\n").as_bytes(), output)?;
+    prepend_file(format!("{line_count}\n").as_str().as_bytes(), &output)?;
     Ok(())
 }
 
@@ -118,39 +165,35 @@ pub fn get_material_distrib(path: String) -> std::io::Result<HashMap<u32, usize>
     Ok(my_map)
 }
 
-impl Rescorer {
-    pub fn new(path: String, output: String, num_workers: usize) -> Rescorer {
-        Rescorer {
-            path,
+//will be used to generate games/results
+impl Generator {
+    pub fn new(book: String, output: String, num_workers: usize, max_samples: usize) -> Generator {
+        Generator {
+            book,
             output,
             num_workers,
-            ..Rescorer::default()
+            max_samples,
         }
     }
 
-    pub fn start_rescoring(self) -> std::io::Result<()> {
-        let mut reader = Arc::new(Mutex::new(BufReader::with_capacity(
-            1000000,
-            File::open(self.path)?,
-        )));
+    pub fn generate_games(self) -> std::io::Result<()> {
+        //need a bloomfilter here
+        let mut filter = Bloom::new_for_fp_rate(1000000000, 0.01);
+        let thread_counter = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        let mut reader = BufReader::with_capacity(1000000, File::open(self.book.clone())?);
         let mut output = File::create(self.output.clone())?;
-        let mut buffer = String::new();
-        let mut counter: usize = 0; // count how many elements have  beenprocessed by our main
-                                    // thread
-        let mut thread_counter = Arc::new(AtomicUsize::new(0));
-        {
-            let mut guard = reader.lock().unwrap();
-            guard.read_line(&mut buffer).unwrap();
+        let mut openings = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx): (Sender<Vec<String>>, Receiver<Vec<String>>) = mpsc::channel();
+        for line in reader.lines().skip(1) {
+            {
+                let result = line?;
+                let mut guard = openings.lock().unwrap();
+                guard.push(result.clone());
+            }
         }
-        let num_samples: u64 = buffer.replace("\n", "").trim().parse().unwrap();
 
-        let progress_count = match self.max_rescores {
-            Some(value) => value as u64,
-            None => num_samples,
-        };
-
-        println!("NumSamples {}", num_samples);
-        let bar = ProgressBar::new(progress_count);
+        let bar = ProgressBar::new(self.max_samples as u64);
         bar.set_style(
         ProgressStyle::with_template(
             "[{elapsed_precise},{eta_precise},{per_sec}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
@@ -159,18 +202,13 @@ impl Rescorer {
         .progress_chars("##-"),
     );
 
-        let (tx, rx): (Sender<(String, i32)>, Receiver<(String, i32)>) = mpsc::channel();
-
-        println!("Starting threads");
-        let mut handles = Vec::new();
-        for thread_id in 0..self.num_workers {
-            let reader_local = Arc::clone(&reader);
-
+        for _ in 0..self.num_workers {
+            let open = Arc::clone(&openings);
             let sender = tx.clone();
-            let a_counter = Arc::clone(&thread_counter);
+            let counter = Arc::clone(&thread_counter);
             let handle = std::thread::spawn(move || {
                 let mut command = Command::new("./generator2")
-                    .args(["--eval_loop"])
+                    .args(["--generate --time 10"])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .spawn()
@@ -179,30 +217,26 @@ impl Rescorer {
                 let stdout = command.stdout.take().unwrap();
                 let mut f = BufReader::new(stdout);
 
-                //creating a local buffer for each thread to hold some positions
-                'outer: loop {
-                    let mut buffer = Vec::with_capacity(10000);
-                    {
-                        let mut guard = reader_local.lock().unwrap();
-                        if !guard.has_data_left().unwrap() {
-                            break 'outer;
-                        }
-                        for _ in 0..10000 {
-                            let mut b = String::new();
-                            match guard.read_line(&mut b) {
-                                Ok(0) => break,
-                                _ => {}
-                            }
-                            buffer.push(b);
-                        }
-                        println!("Filled buffer for thread{thread_id}");
-                    }
+                //get one random opening
 
-                    for (counter, value) in buffer.iter().enumerate() {
-                        let trimmed = value.trim().replace("\n", "");
-                        stdin
-                            .write_all((String::from(trimmed) + "\n").as_bytes())
-                            .unwrap();
+                'outer: loop {
+                    let mut start_pos = String::new();
+                    {
+                        while start_pos.is_empty() {
+                            let guard = open.lock().unwrap();
+                            let opening = guard.choose(&mut rand::thread_rng()).unwrap();
+                            start_pos = opening.clone();
+                        }
+                        if cfg!(debug_assertions) {
+                            println!("Using the opening {start_pos}");
+                        }
+                    }
+                    let trimmed = start_pos.trim().replace("\n", "");
+                    stdin
+                        .write_all((String::from(trimmed) + "\n").as_bytes())
+                        .unwrap();
+                    let mut game = Vec::new();
+                    loop {
                         let mut buffer = String::new();
                         match f.read_line(&mut buffer) {
                             Ok(_) => {}
@@ -210,23 +244,20 @@ impl Rescorer {
                                 println!("{:?}", e)
                             }
                         }
-                        let splits: Vec<&str> = buffer.split("!").collect();
-
-                        let eval: i32 = splits[1].trim().replace("\n", "").parse().unwrap();
-                        let is_send =
-                            sender.send((String::from(splits[0].trim().replace("\n", "")), eval));
-
-                        if let Err(_) = is_send {
-                            break 'outer;
+                        buffer = buffer.trim().replace("\n", "");
+                        if buffer != "BEGIN" && buffer != "END" {
+                            game.push(String::from(buffer.trim().replace("\n", "")));
                         }
-
-                        //Now we can count up
-                        a_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        if a_counter.load(std::sync::atomic::Ordering::SeqCst)
-                            >= self.max_rescores.unwrap_or(num_samples as usize)
-                        {
-                            break 'outer;
+                        if buffer == "END" {
+                            break;
                         }
+                    }
+                    let is_send = sender.send(game);
+                    if let Err(_) = is_send {
+                        break;
+                    }
+                    if counter.load(std::sync::atomic::Ordering::SeqCst) >= self.max_samples {
+                        break;
                     }
                 }
                 stdin
@@ -237,31 +268,50 @@ impl Rescorer {
             });
             handles.push(handle);
         }
+        let mut unique_count = 0;
+        let mut total_count = 0;
+        'game: for game in rx {
+            for value in game {
+                let splits: Vec<&str> = value.split("!").collect();
+                let position = String::from(splits[0].replace("\n", "").trim());
+                let result_string = String::from(splits[1].replace("\n", "").trim());
+                if cfg!(debug_assertions) {
+                    println!("{}", value);
+                }
 
-        for value in rx {
-            let (pos, eval) = value;
-            let mut sample = Sample::Sample::default();
-            sample.eval = eval as i16;
-            sample.position = SampleType::Fen(pos);
-            sample.write_fen(&mut output)?;
-            bar.inc(1);
-            counter += 1;
-            //to be save code below
-            if thread_counter.load(std::sync::atomic::Ordering::SeqCst)
-                >= self.max_rescores.unwrap_or(num_samples as usize)
-            {
-                break;
+                if !filter.check(&position) {
+                    unique_count += 1;
+                    filter.set(&position);
+                    bar.inc(1);
+
+                    thread_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if thread_counter.load(std::sync::atomic::Ordering::SeqCst) >= self.max_samples
+                    {
+                        break 'game;
+                    }
+                }
+                //writing the samples to our file
+                let mut sample = Sample::Sample::default();
+                sample.position = SampleType::Fen(position);
+                sample.result = Sample::Result::from(result_string.as_str());
+                if sample.result == Sample::Result::UNKNOWN {
+                    println!("Error {result_string}");
+                }
+                if sample.result != Sample::Result::UNKNOWN {
+                    sample.write_fen::<File>(&mut output)?;
+                    total_count += 1;
+                }
             }
         }
+
         for handle in handles {
             handle.join().unwrap();
         }
+        println!("We got back {unique_count} unique samples and a total of {total_count} ");
+        //writing the file
         drop(output);
-        println!("We wrote {} samples to output", counter);
-
-        let bytes = counter.to_le_bytes();
         let path = Path::new(self.output.as_str());
-        prepend_file(bytes.as_slice(), &path)?;
+        prepend_file((total_count as u64).to_le_bytes().as_slice(), &path)?;
         Ok(())
     }
 }
